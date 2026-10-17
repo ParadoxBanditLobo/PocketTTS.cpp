@@ -219,11 +219,35 @@ option(BUILD_DESKTOP "Build local raylib desktop GUI when raylib is installed" O
 if(BUILD_DESKTOP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(raylib 5.0 QUIET)
     if(raylib_FOUND)
+        # The frontend uses Pocket TTS's native C API in-process. We retain
+        # the original CLI build and exclude only its main() from this library.
+        add_library(pocket-tts-core STATIC pocket_tts.cpp)
+        target_compile_definitions(pocket-tts-core PRIVATE PTT_SHARED_LIB)
+        target_include_directories(pocket-tts-core PRIVATE
+            ${ONNXRUNTIME_INCLUDE_DIR}
+            ${SENTENCEPIECE_INCLUDE_DIRS}
+            ${dr_libs_SOURCE_DIR}
+        )
+        target_link_libraries(pocket-tts-core PUBLIC
+            ${ONNXRUNTIME_LIB}
+            sentencepiece-static
+            pthread dl
+        )
+
         add_executable(pocket-tts-desktop desktop/main.cpp)
         target_link_libraries(pocket-tts-desktop PRIVATE
-            raylib pthread dl m GL X11 Xrandr Xi Xcursor Xinerama rt)
+            pocket-tts-core raylib pthread dl m GL X11 Xrandr Xi Xcursor Xinerama rt)
         target_compile_options(pocket-tts-desktop PRIVATE -Wall -Wextra -Wpedantic)
-        message(STATUS "Desktop GUI: pocket-tts-desktop (raylib)")
+        set_target_properties(pocket-tts-desktop PROPERTIES
+            BUILD_RPATH "$ORIGIN"
+            INSTALL_RPATH "$ORIGIN"
+            BUILD_WITH_INSTALL_RPATH TRUE)
+        # libonnxruntime.so has a SONAME of libonnxruntime.so.1 on Linux.
+        # Provide that exact filename alongside the native executable.
+        add_custom_command(TARGET pocket-tts-desktop POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${ONNXRUNTIME_LIB} "${CMAKE_SOURCE_DIR}/libonnxruntime.so.1")
+        message(STATUS "Desktop GUI: pocket-tts-desktop (raylib, in-process ONNX engine)")
     else()
         message(STATUS "Desktop GUI skipped: raylib >= 5.0 not found (CLI remains available)")
     endif()

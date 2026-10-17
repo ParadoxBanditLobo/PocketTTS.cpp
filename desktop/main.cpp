@@ -1,28 +1,36 @@
-// PocketTTS Desktop: optional, local-only raylib frontend for the existing CLI.
+// PocketTTS Desktop: optional, local-only raylib frontend for native inference.
 // Copyright (c) 2026 PocketTTS Desktop contributors. MIT (see repository LICENSE).
 #include "raylib.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
-#include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <cerrno>
-#include <csignal>
-#include <fcntl.h>
 #include <filesystem>
+#include <fstream>
+#include <limits>
 #include <mutex>
-#include <spawn.h>
+#include <stdexcept>
 #include <string>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <thread>
-#include <unistd.h>
 #include <vector>
+#include <unistd.h>
 
-extern char **environ;
+// Existing native inference C API; the GUI links it as a static engine.
+extern "C" {
+void* ptt_create(const char*, const char*, const char*, const char*, float, int, int);
+const char* ptt_last_error();
+void ptt_destroy(void*);
+void* ptt_stream_start(void*, const char*, const char*);
+int ptt_stream_read(void*, float**, int*);
+const char* ptt_stream_error(void*);
+void ptt_stream_end(void*);
+void ptt_free_audio(float*);
+}
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -38,10 +46,11 @@ const Color WHITE = {255, 255, 255, 255};
 struct Job {
     std::atomic<bool> busy{false};
     std::atomic<bool> finished{false};
-    std::atomic<pid_t> child{-1};
+    std::atomic<bool> cancel{false};
     std::thread thread;
     std::mutex mutex;
     std::string failure;
+    void *engine = nullptr; // only the worker and post-join cleanup touch this
 };
 
 std::string strip_line_ending(std::string input) {
@@ -156,53 +165,100 @@ fs::path executable_dir(const char *argv0) {
     return fs::absolute(argv0).parent_path();
 }
 
-void generate(Job &job, fs::path binary, fs::path models, fs::path cache, fs::path voice,
+void write_u16(std::ofstream &file, uint16_t v) {
+    const char b[2] = {char(v & 255), char((v >> 8) & 255)};
+    file.write(b, 2);
+}
+
+void write_u32(std::ofstream &file, uint32_t v) {
+    const char b[4] = {char(v & 255), char((v >> 8) & 255),
+                       char((v >> 16) & 255), char((v >> 24) & 255)};
+    file.write(b, 4);
+}
+
+bool write_wav(const fs::path &path, const std::vector<float> &audio) {
+    // 16-bit mono WAV for broad playback compatibility. Pocket TTS runs at 24 kHz.
+    constexpr uint32_t sample_rate = 24000;
+    constexpr uint32_t max_samples = (std::numeric_limits<uint32_t>::max() - 36) / 2;
+    if (audio.empty() || audio.size() > max_samples) return false;
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    file.write("RIFF", 4); write_u32(file, uint32_t(36 + 2 * audio.size()));
+    file.write("WAVEfmt ", 8); write_u32(file, 16);
+    write_u16(file, 1); write_u16(file, 1);
+    write_u32(file, sample_rate); write_u32(file, sample_rate * 2);
+    write_u16(file, 2); write_u16(file, 16);
+    file.write("data", 4); write_u32(file, uint32_t(audio.size() * 2));
+    for (float sample : audio) {
+        const float safe = std::isfinite(sample) ? std::clamp(sample, -1.0f, 1.0f) : 0.0f;
+        const auto quantized = int16_t(std::lrint(safe * 32767.0f));
+        write_u16(file, static_cast<uint16_t>(quantized));
+    }
+    file.flush();
+    return file.good();
+}
+
+void generate(Job &job, fs::path models, fs::path cache, fs::path voice,
               fs::path output, std::string text) {
+    if (job.thread.joinable()) job.thread.join();
     job.busy = true;
     job.finished = false;
+    job.cancel = false;
     job.failure.clear();
-    job.thread = std::thread([&job, binary, models, cache, voice, output, text = std::move(text)] {
-        fs::path temp = output;
-        temp += ".part.wav";
+    job.thread = std::thread([&job, models, cache, voice, output, text = std::move(text)] {
+        std::string failure;
+        const fs::path temp = fs::path(output.string() + ".part.wav");
         std::error_code ec;
         fs::remove(temp, ec);
-        // Cache names are keyed by full reference path, not just basename.
-        // Upstream cache filenames use stems, so different voice.wav files
-        // otherwise collide when they share a cache directory.
-        unsigned long long key = 14695981039346656037ull;
-        for (unsigned char ch : voice.lexically_normal().string()) {
-            key = (key ^ ch) * 1099511628211ull;
-        }
-        const fs::path voice_cache = cache / std::to_string(key);
-        fs::create_directories(voice_cache, ec);
-        const std::string b = binary.string(), m = models.string(), c = voice_cache.string();
-        const std::string v = voice.string(), o = temp.string();
-        const std::string tok = (models / "tokenizer.model").string();
-        std::vector<char*> args = {const_cast<char*>(b.c_str()),
-            const_cast<char*>("--models-dir"), const_cast<char*>(m.c_str()),
-            const_cast<char*>("--tokenizer"), const_cast<char*>(tok.c_str()),
-            const_cast<char*>("--voices-dir"), const_cast<char*>(c.c_str()),
-            const_cast<char*>(text.c_str()), const_cast<char*>(v.c_str()),
-            const_cast<char*>(o.c_str()), nullptr};
-        posix_spawn_file_actions_t actions;
-        posix_spawn_file_actions_init(&actions);
-        posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
-        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-        pid_t pid = -1;
-        const int rc = posix_spawn(&pid, b.c_str(), &actions, nullptr, args.data(), environ);
-        posix_spawn_file_actions_destroy(&actions);
-        int status = -1;
-        if (rc == 0) {
-            job.child = pid;
-            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-            job.child = -1;
-        }
-        std::string failure;
-        if (rc != 0) failure = "Could not start pocket-tts. Build the CLI first.";
-        else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) failure = "Generation failed. Check the model files and reference audio.";
-        else {
-            fs::rename(temp, output, ec);
-            if (ec) failure = "Could not save generated audio to the temporary directory.";
+        try {
+            // Initialize ONNX sessions only once. Voice models are reused.
+            if (!job.engine) {
+                const std::string model_path = models.string();
+                const std::string tokenizer_path = (models / "tokenizer.model").string();
+                const std::string voice_cache = cache.string();
+                job.engine = ptt_create(model_path.c_str(), voice_cache.c_str(),
+                    tokenizer_path.c_str(), "int8", 0.7f, 1, 0);
+                if (!job.engine) {
+                    const char *detail = ptt_last_error();
+                    throw std::runtime_error(detail && *detail ? detail : "Failed to load Pocket TTS model files.");
+                }
+            }
+            const std::string reference = voice.string();
+            void *stream = ptt_stream_start(job.engine, text.c_str(), reference.c_str());
+            if (!stream) throw std::runtime_error("Unable to start speech generation.");
+            std::vector<float> samples;
+            samples.reserve(24000 * 5);
+            bool failed = false;
+            while (true) {
+                float *chunk = nullptr;
+                int count = 0;
+                const int result = ptt_stream_read(stream, &chunk, &count);
+                if (result <= 0) {
+                    if (result < 0) {
+                        const char *detail = ptt_stream_error(stream);
+                        failure = detail && *detail ? detail : "Speech generation failed.";
+                        failed = true;
+                    }
+                    break;
+                }
+                if (count <= 0 || chunk == nullptr || samples.size() + size_t(count) > 24000u * 300u) {
+                    ptt_free_audio(chunk);
+                    failure = "Invalid or oversized audio output.";
+                    failed = true;
+                    break;
+                }
+                samples.insert(samples.end(), chunk, chunk + count);
+                ptt_free_audio(chunk);
+                if (job.cancel) { failed = true; failure = "Generation cancelled."; break; }
+            }
+            ptt_stream_end(stream);
+            if (!failed) {
+                if (!write_wav(temp, samples)) throw std::runtime_error("Could not write the generated WAV.");
+                fs::rename(temp, output, ec);
+                if (ec) throw std::runtime_error("Unable to finalize the generated WAV.");
+            }
+        } catch (const std::exception &e) {
+            failure = e.what();
         }
         if (!failure.empty()) fs::remove(temp, ec);
         {
@@ -213,12 +269,12 @@ void generate(Job &job, fs::path binary, fs::path models, fs::path cache, fs::pa
         job.finished = true;
     });
 }
+
 }
 
 int main(int argc, char **argv) {
     (void)argc;
     const fs::path base = executable_dir(argv[0]);
-    const fs::path binary = base / "pocket-tts";
     const fs::path models = base / "models";
     fs::path cache;
     const char *xdg_cache = getenv("XDG_CACHE_HOME");
@@ -249,7 +305,7 @@ int main(int argc, char **argv) {
 
     std::string text = "Hello. This is my Pocket TTS voice.";
     std::string voice;
-    std::string status = "Choose a reference recording to begin.";
+    std::string status = "Choose a reference recording to begin. Model loads on first use.";
     bool edit_text = true;
     bool edit_voice = false;
     bool has_audio = false;
@@ -317,14 +373,13 @@ int main(int argc, char **argv) {
             else status = "File picker unavailable or cancelled. Drag a file here or paste its path.";
         }
         if (button(generate_button, job.busy ? "Generating..." : "Generate Audio", can_generate, true)) {
-            if (!fs::exists(binary)) status = "Missing pocket-tts CLI next to this application.";
-            else if (!fs::exists(models / "tokenizer.model")) status = "Missing models/tokenizer.model. Run ONNX model setup first.";
+            if (!fs::exists(models / "tokenizer.model")) status = "Missing models/tokenizer.model. Run ONNX model setup first.";
             else if (!fs::is_regular_file(fs::path(voice))) status = "Reference audio file not found.";
             else if (!is_audio(voice)) status = "Choose a WAV, MP3, or FLAC reference.";
             else {
                 if (has_audio) { StopSound(sound); UnloadSound(sound); has_audio = false; }
                 status = "Generating speech locally...";
-                generate(job, binary, models, cache, fs::absolute(voice), output, text);
+                generate(job, models, cache, fs::absolute(voice), output, text);
             }
         }
         DrawText(tail_to_fit(status, int(ww), 16).c_str(), int(x), 491, 16, job.busy ? BLUE : MUTED);
@@ -340,22 +395,20 @@ int main(int argc, char **argv) {
                 status = ec ? "Unable to write the chosen WAV file." : "WAV saved successfully.";
             }
         }
-        DrawText("Runs locally. No browser, Python runtime, or HTTP server.", int(x), h - 39, 15, MUTED);
+        DrawText("Direct native synthesis. No Python runtime or HTTP server.", int(x), h - 39, 15, MUTED);
         EndDrawing();
         if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_ENTER) && can_generate) {
-            if (fs::exists(binary) && fs::exists(models / "tokenizer.model") && fs::is_regular_file(fs::path(voice)) && is_audio(voice)) {
+            if (fs::exists(models / "tokenizer.model") && fs::is_regular_file(fs::path(voice)) && is_audio(voice)) {
                 if (has_audio) { StopSound(sound); UnloadSound(sound); has_audio = false; }
                 status = "Generating speech locally...";
-                generate(job, binary, models, cache, fs::absolute(voice), output, text);
+                generate(job, models, cache, fs::absolute(voice), output, text);
             }
         }
     }
 
-    if (job.busy) {
-        const pid_t child = job.child.load();
-        if (child > 0) kill(child, SIGTERM);
-    }
+    if (job.busy) job.cancel = true;
     if (job.thread.joinable()) job.thread.join();
+    if (job.engine) ptt_destroy(job.engine);
     if (has_audio) UnloadSound(sound);
     CloseAudioDevice();
     CloseWindow();
