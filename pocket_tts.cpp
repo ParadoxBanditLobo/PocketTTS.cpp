@@ -49,9 +49,14 @@
 // Keep Pocket TTS's copy private to this translation unit so a static
 // raylib build does not produce duplicate drwav/drmp3/drflac linker symbols.
 // This does not change the C API exported by Pocket TTS itself.
+// dr_libs normally defines both its public API and private-helper macros
+// in one conditional. Overriding API requires defining PRIVATE as well.
 #define DRWAV_API static
+#define DRWAV_PRIVATE static
 #define DRMP3_API static
+#define DRMP3_PRIVATE static
 #define DRFLAC_API static
+#define DRFLAC_PRIVATE static
 
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
