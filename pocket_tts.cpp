@@ -45,6 +45,14 @@
 #include <onnxruntime_cxx_api.h>
 #include <sentencepiece_processor.h>
 
+// These single-header decoders are embedded in Pocket TTS and raylib.
+// Keep Pocket TTS's copy private to this translation unit so a static
+// raylib build does not produce duplicate drwav/drmp3/drflac linker symbols.
+// This does not change the C API exported by Pocket TTS itself.
+#define DRWAV_API static
+#define DRMP3_API static
+#define DRFLAC_API static
+
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
 
