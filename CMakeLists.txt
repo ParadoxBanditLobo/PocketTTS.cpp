@@ -11,7 +11,7 @@
 # Run:
 #   ./pocket-tts "Hello world" voice.wav output.wav
 
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.25)
 project(pocket_tts VERSION 1.0.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -88,7 +88,6 @@ FetchContent_Declare(sentencepiece
     GIT_TAG v0.2.1
     GIT_SHALLOW TRUE
     PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=<SOURCE_DIR> -P ${CMAKE_BINARY_DIR}/patch_sentencepiece.cmake
-    EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(sentencepiece)
 target_compile_options(sentencepiece-static PRIVATE -w)
@@ -233,7 +232,20 @@ message(STATUS "")
 option(BUILD_DESKTOP "Build local raylib desktop GUI when raylib is installed" ON)
 if(BUILD_DESKTOP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(raylib 5.0 QUIET)
-    if(raylib_FOUND)
+    if(NOT TARGET raylib)
+        # Stable Devuan releases may not package raylib. Build this small
+        # graphics library from its upstream 5.5 release instead.
+        set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
+        set(CUSTOMIZE_BUILD OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(raylib
+            GIT_REPOSITORY https://github.com/raysan5/raylib.git
+            GIT_TAG 5.5
+            GIT_SHALLOW TRUE
+        )
+        FetchContent_MakeAvailable(raylib)
+    endif()
+    if(TARGET raylib)
         # The frontend uses Pocket TTS's native C API in-process. We retain
         # the original CLI build and exclude only its main() from this library.
         add_library(pocket-tts-core STATIC pocket_tts.cpp)
@@ -264,7 +276,7 @@ if(BUILD_DESKTOP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 ${ONNXRUNTIME_LIB} "${CMAKE_SOURCE_DIR}/libonnxruntime.so.1")
         message(STATUS "Desktop GUI: pocket-tts-desktop (raylib, in-process ONNX engine)")
     else()
-        message(STATUS "Desktop GUI skipped: raylib >= 5.0 not found (CLI remains available)")
+        message(FATAL_ERROR "Raylib 5.5 could not be configured for desktop GUI")
     endif()
 endif()
 

@@ -21,7 +21,7 @@ One file (`pocket_tts.cpp`), no frameworks, no Python dependency at runtime.
 
 ## Requirements
 
-- CMake 3.28+
+- CMake 3.25+ for the fork desktop build
 - C++17 compiler (GCC, Clang)
 - Linux, macOS, or Windows
 
@@ -197,6 +197,17 @@ MIT — see [LICENSE](LICENSE).
 
 This fork adds an **optional raylib window** inspired by the Pocket TTS local demo: enter text, choose/drag in a WAV/MP3/FLAC reference, generate speech, play it, or save it as a WAV. The existing CLI and HTTP server are unchanged.
 
-Install raylib 5.x development files and build normally. When raylib is detected, CMake also builds \`./pocket-tts-desktop\`. It requires the existing \`./pocket-tts\` executable and ONNX models in \`models/\`. The desktop program links the native streaming C API directly and keeps model sessions loaded between generations; it needs no Python runtime, web server, or CLI subprocess. Optional \`zenity\` supplies file dialogs (required for Save WAV at this checkpoint).
+Raylib 5.x is used for the GUI. On Devuan, where raylib development packages may be unavailable, CMake can fetch and build raylib 5.5 automatically. CMake also builds \`./pocket-tts-desktop\`, which requires ONNX models in \`models/\` but **does not need the CLI at runtime**. The desktop program links the native streaming C API directly and keeps model sessions loaded between generations; it needs no Python runtime, web server, or CLI subprocess. Optional \`zenity\` supplies file dialogs (required for Save WAV at this checkpoint).
 
 See [desktop checkpoint notes](docs/DESKTOP.md) for setup, privacy, current limitations, and test status.
+
+
+### Devuan testing
+
+Devuan 5 and 6 are the primary Linux testing targets for this fork. The
+bootstrap development package supplied for this checkpoint fetches sources,
+offers to install build dependencies using configured Devuan APT repositories,
+and **asks permission** before downloading third-party ONNX models. Python is
+not required by the resulting application. See
+[Devuan setup notes](docs/DEVUAN.md). The third-party preconverted models must
+still be verified with end-to-end speech synthesis.
