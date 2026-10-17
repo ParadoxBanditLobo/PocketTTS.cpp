@@ -210,3 +210,21 @@ else()
 endif()
 message(STATUS "=====================")
 message(STATUS "")
+
+
+# =============================================================================
+# Optional Linux desktop GUI (raylib). Core CLI/shared library remain unchanged.
+# =============================================================================
+option(BUILD_DESKTOP "Build local raylib desktop GUI when raylib is installed" ON)
+if(BUILD_DESKTOP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(raylib 5.0 QUIET)
+    if(raylib_FOUND)
+        add_executable(pocket-tts-desktop desktop/main.cpp)
+        target_link_libraries(pocket-tts-desktop PRIVATE
+            raylib pthread dl m GL X11 Xrandr Xi Xcursor Xinerama rt)
+        target_compile_options(pocket-tts-desktop PRIVATE -Wall -Wextra -Wpedantic)
+        message(STATUS "Desktop GUI: pocket-tts-desktop (raylib)")
+    else()
+        message(STATUS "Desktop GUI skipped: raylib >= 5.0 not found (CLI remains available)")
+    endif()
+endif()

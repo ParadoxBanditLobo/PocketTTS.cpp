@@ -191,3 +191,12 @@ To disable caching entirely, pass `--no-cache`.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+## Optional Linux desktop GUI (fork checkpoint A)
+
+This fork adds an **optional raylib window** inspired by the Pocket TTS local demo: enter text, choose/drag in a WAV/MP3/FLAC reference, generate speech, play it, or save it as a WAV. The existing CLI and HTTP server are unchanged.
+
+Install raylib 5.x development files and build normally. When raylib is detected, CMake also builds \`./pocket-tts-desktop\`. It requires the existing \`./pocket-tts\` executable and ONNX models in \`models/\`. The desktop program has no Python runtime or web server. Optional \`zenity\` supplies file dialogs (required for Save WAV at this checkpoint).
+
+See [desktop checkpoint notes](docs/DESKTOP.md) for setup, privacy, current limitations, and test status.
