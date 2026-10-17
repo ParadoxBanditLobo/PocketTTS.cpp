@@ -44,7 +44,7 @@ models/
 The initial test bootstrap offers an explicit opt-in download from:
 https://huggingface.co/IgnitiveLabs/PocketTTS-ONNX
 
-This is a third-party, preconverted ONNX repository which lists CC BY 4.0 as the model license, attributes the original model to Kyutai, and includes these filenames. **Compatibility with this exact C++ implementation has not yet been verified by audio testing.** Downloading these files should not be conflated with a successful synthesis test. Review the model card and license and do not commit model weights or personal reference voices to the public repository.
+This is a third-party, preconverted ONNX repository which lists CC BY 4.0 as the model license, attributes the original model to Kyutai, and includes these filenames. **Important: The initial Devuan bootstrap used IgnitiveLabs ONNX models exported with KevinAHM's exporter. Its bundle has a different state initialization and voice-conditioning contract than PocketTTS.cpp's exporter. Those weights may generate clicks/noise even when inference succeeds. Do NOT redownload the same models to resolve distorted output.** Downloading these files should not be conflated with a successful synthesis test. Review the model card and license and do not commit model weights or personal reference voices to the public repository.
 
 If the preconverted model layout is incompatible, the reliable fallback is to run \`export_onnx.py\` once using a temporary Python development environment and original weights. The resulting **app still needs no Python at runtime**. Do not install the Python dependencies globally simply to use the GUI.
 
@@ -67,3 +67,21 @@ Choose WAV, MP3, or FLAC reference audio. M4A is not directly supported by this 
 - Do not share Hugging Face tokens, personally identifying local paths, or reference audio unless you intend to.
 
 For initial testing, capture the final 30-50 lines of terminal output if something fails. Never run commands from strangers with elevated privileges without reviewing what they do.
+
+
+## When the result is clicks or noise
+
+1. Run the same reference sample through your already-working Python Pocket TTS to exclude a bad reference.
+2. Run the native CLI from the test repository with the diagnostic command in scripts/audio-smoke-test.sh (see below).
+3. If the native CLI WAV is also bad, the problem precedes the raylib GUI. Investigate ONNX model-export compatibility.
+4. If the CLI WAV is good, compare the GUI's saved WAV with an external player to isolate raylib playback.
+
+The initial ONNX download from IgnitiveLabs uses the KevinAHM exporter, not the one included in PocketTTS.cpp. Existing upstream issue #12 documents that the included export_onnx.py is no longer compatible with current pocket-tts package configurations (b6369a24.yaml was removed). An updated, verified export will be required before reworking the model setup. A separate upstream issue #13 also reports audible INT8 artifacts with some models. Do not install Python packages globally or discard your working Python setup.
+
+To perform a model-free audio path test, run:
+
+```sh
+sh scripts/audio-smoke-test.sh /path/to/your/reference.wav
+```
+
+This writes the comparison WAV to a private temporary directory. It does not copy the reference into the Git checkout or upload it anywhere.
