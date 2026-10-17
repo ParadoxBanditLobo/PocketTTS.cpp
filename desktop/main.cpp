@@ -40,9 +40,9 @@ constexpr int HEIGHT = 690;
 const Color BG = {246, 247, 250, 255};
 const Color TEXT = {35, 43, 57, 255};
 const Color MUTED = {94, 105, 120, 255};
-const Color BLUE = {45, 97, 224, 255};
+const Color ACCENT_BLUE = {45, 97, 224, 255};
 const Color BORDER = {216, 222, 232, 255};
-const Color WHITE = {255, 255, 255, 255};
+const Color PANEL_WHITE = {255, 255, 255, 255};
 
 struct Job {
     std::atomic<bool> busy{false};
@@ -111,10 +111,10 @@ void edit_field(std::string &value, bool multiline, size_t limit) {
 
 bool button(Rectangle r, const char *title, bool enabled, bool primary = false) {
     bool hover = enabled && CheckCollisionPointRec(GetMousePosition(), r);
-    DrawRectangleRounded(r, 0.13f, 8, !enabled ? BORDER : primary ? (hover ? Color{29, 76, 197, 255} : BLUE) : (hover ? Color{230, 236, 248, 255} : WHITE));
+    DrawRectangleRounded(r, 0.13f, 8, !enabled ? BORDER : primary ? (hover ? Color{29, 76, 197, 255} : ACCENT_BLUE) : (hover ? Color{230, 236, 248, 255} : PANEL_WHITE));
     if (!primary) DrawRectangleRoundedLinesEx(r, 0.13f, 8, 1.0f, BORDER);
     int fs = 18;
-    DrawText(title, int(r.x + (r.width - MeasureText(title, fs))/2), int(r.y + (r.height - fs)/2), fs, primary ? WHITE : TEXT);
+    DrawText(title, int(r.x + (r.width - MeasureText(title, fs))/2), int(r.y + (r.height - fs)/2), fs, primary ? PANEL_WHITE : TEXT);
     return hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
 
@@ -354,12 +354,12 @@ int main(int argc, char **argv) {
         DrawText("Pocket TTS", int(x), 23, 29, TEXT);
         DrawText("Standalone offline voice cloning", int(x), 59, 16, MUTED);
         DrawText("Text", int(x), 72, 16, TEXT);
-        DrawRectangleRounded(text_box, .045f, 8, WHITE);
-        DrawRectangleRoundedLinesEx(text_box, .045f, 8, 1.2f, edit_text ? BLUE : BORDER);
+        DrawRectangleRounded(text_box, .045f, 8, PANEL_WHITE);
+        DrawRectangleRoundedLinesEx(text_box, .045f, 8, 1.2f, edit_text ? ACCENT_BLUE : BORDER);
         draw_wrapped(text, {x+15, 107, ww-30, 160}, 19);
         DrawText("Reference audio   (WAV / MP3 / FLAC)", int(x), 307, 17, TEXT);
-        DrawRectangleRounded(voice_box, .13f, 8, WHITE);
-        DrawRectangleRoundedLinesEx(voice_box, .13f, 8, 1.2f, edit_voice ? BLUE : BORDER);
+        DrawRectangleRounded(voice_box, .13f, 8, PANEL_WHITE);
+        DrawRectangleRoundedLinesEx(voice_box, .13f, 8, 1.2f, edit_voice ? ACCENT_BLUE : BORDER);
         DrawText(voice.empty() ? "Drag an audio file here or select Browse..." : tail_to_fit(voice, int(voice_box.width)-20, 17).c_str(),
                  int(x+12), 350, 17, voice.empty() ? MUTED : TEXT);
         if (button({x+ww-148, 338, 148, 46}, "Browse...", !job.busy)) {
@@ -378,7 +378,7 @@ int main(int argc, char **argv) {
                 generate(job, models, cache, fs::absolute(voice), output, text);
             }
         }
-        DrawText(tail_to_fit(status, int(ww), 16).c_str(), int(x), 491, 16, job.busy ? BLUE : MUTED);
+        DrawText(tail_to_fit(status, int(ww), 16).c_str(), int(x), 491, 16, job.busy ? ACCENT_BLUE : MUTED);
         DrawText("Generated audio", int(x), 516, 18, TEXT);
         if (button(play_button, playing ? "Stop" : "Play", has_audio)) {
             if (playing) StopSound(sound); else PlaySound(sound);
