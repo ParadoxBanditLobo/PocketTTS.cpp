@@ -231,7 +231,7 @@ message(STATUS "")
 # =============================================================================
 option(BUILD_DESKTOP "Build local raylib desktop GUI when raylib is installed" ON)
 if(BUILD_DESKTOP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_package(raylib 5.0 QUIET)
+    find_package(raylib 5.5 QUIET)
     if(NOT TARGET raylib)
         # Stable Devuan releases may not package raylib. Build this small
         # graphics library from its upstream 5.5 release instead.

@@ -341,7 +341,7 @@ int main(int argc, char **argv) {
             else {
                 if (has_audio) { StopSound(sound); UnloadSound(sound); has_audio = false; }
                 sound = LoadSound(output.string().c_str());
-                has_audio = IsSoundReady(sound);
+                has_audio = IsSoundValid(sound);
                 status = has_audio ? "Generated audio is ready. Press Play or Save WAV." : "WAV generated, but playback could not load it.";
             }
         }
