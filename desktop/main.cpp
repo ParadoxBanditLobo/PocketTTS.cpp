@@ -1,6 +1,7 @@
 // PocketTTS Desktop: optional, local-only raylib frontend for native inference.
 // Copyright (c) 2026 PocketTTS Desktop contributors. MIT (see repository LICENSE).
 #include "raylib.h"
+#include "preflight.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -70,12 +71,6 @@ std::string chooser(bool save) {
     while (fgets(buf, sizeof(buf), pipe)) result += buf;
     const int exit_code = pclose(pipe);
     return exit_code == 0 ? strip_line_ending(result) : std::string{};
-}
-
-bool is_audio(const std::string &path) {
-    std::string ext = fs::path(path).extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return ext == ".wav" || ext == ".mp3" || ext == ".flac";
 }
 
 void delete_last_codepoint(std::string &s) {
@@ -324,7 +319,7 @@ int main(int argc, char **argv) {
 
         if (IsFileDropped()) {
             FilePathList dropped = LoadDroppedFiles();
-            if (dropped.count && dropped.paths[0] && is_audio(dropped.paths[0])) {
+            if (dropped.count && dropped.paths[0] && ptt_desktop::is_audio_path(dropped.paths[0])) {
                 voice = dropped.paths[0];
                 status = "Reference audio selected.";
             }
@@ -373,9 +368,10 @@ int main(int argc, char **argv) {
             else status = "File picker unavailable or cancelled. Drag a file here or paste its path.";
         }
         if (button(generate_button, job.busy ? "Generating..." : "Generate Audio", can_generate, true)) {
-            if (!fs::exists(models / "tokenizer.model")) status = "Missing models/tokenizer.model. Run ONNX model setup first.";
-            else if (!fs::is_regular_file(fs::path(voice))) status = "Reference audio file not found.";
-            else if (!is_audio(voice)) status = "Choose a WAV, MP3, or FLAC reference.";
+            const auto missing = ptt_desktop::validate_models(models);
+            const auto invalid = ptt_desktop::validate_reference(voice);
+            if (!missing.empty()) status = missing;
+            else if (!invalid.empty()) status = invalid;
             else {
                 if (has_audio) { StopSound(sound); UnloadSound(sound); has_audio = false; }
                 status = "Generating speech locally...";
@@ -398,7 +394,11 @@ int main(int argc, char **argv) {
         DrawText("Direct native synthesis. No Python runtime or HTTP server.", int(x), h - 39, 15, MUTED);
         EndDrawing();
         if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_ENTER) && can_generate) {
-            if (fs::exists(models / "tokenizer.model") && fs::is_regular_file(fs::path(voice)) && is_audio(voice)) {
+            const auto missing = ptt_desktop::validate_models(models);
+            const auto invalid = ptt_desktop::validate_reference(voice);
+            if (!missing.empty()) status = missing;
+            else if (!invalid.empty()) status = invalid;
+            else {
                 if (has_audio) { StopSound(sound); UnloadSound(sound); has_audio = false; }
                 status = "Generating speech locally...";
                 generate(job, models, cache, fs::absolute(voice), output, text);

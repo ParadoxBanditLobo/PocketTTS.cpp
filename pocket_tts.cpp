@@ -1519,7 +1519,15 @@ public:
         }
         
         if (!raw) throw std::runtime_error("Failed to load audio: " + path);
-        
+        // Some decoders may return a non-null allocation for an empty/broken
+        // recording. Reject it before division by channels or max_element().
+        if (n == 0 || ch == 0 || sr == 0) {
+            if (ext == ".mp3") drmp3_free(raw, nullptr);
+            else if (ext == ".flac" || ext == ".ogg") drflac_free(raw, nullptr);
+            else drwav_free(raw, nullptr);
+            throw std::runtime_error("Reference recording is empty or invalid: " + path);
+        }
+
         std::vector<float> mono(n);
         for (size_t i = 0; i < n; ++i) {
             float sum = 0;

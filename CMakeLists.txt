@@ -129,6 +129,15 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_link_libraries(pocket-tts PRIVATE ws2_32)
 endif()
 
+# Packaged executables must resolve the runtime beside themselves rather
+# than relying on an absolute CMake build-tree path.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_target_properties(pocket-tts PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+        BUILD_WITH_INSTALL_RPATH TRUE)
+endif()
+
 # Copy ONNX runtime shared library next to outputs
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     add_custom_command(TARGET pocket-tts POST_BUILD
@@ -140,6 +149,12 @@ else()
     add_custom_command(TARGET pocket-tts POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_LIB} $<TARGET_FILE_DIR:pocket-tts>
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # ONNX Runtime binaries record libonnxruntime.so.1 as their SONAME.
+        add_custom_command(TARGET pocket-tts POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_LIB}
+                "$<TARGET_FILE_DIR:pocket-tts>/libonnxruntime.so.1")
+    endif()
 endif()
 
 # Shared library (for FFI from Deno/Python)
@@ -251,4 +266,13 @@ if(BUILD_DESKTOP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     else()
         message(STATUS "Desktop GUI skipped: raylib >= 5.0 not found (CLI remains available)")
     endif()
+endif()
+
+# Model-free tests for desktop input validation; no ONNX models or GUI needed.
+option(BUILD_DESKTOP_TESTS "Compile offline desktop preflight tests" OFF)
+if(BUILD_DESKTOP_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    enable_testing()
+    add_executable(pocket-tts-preflight-test desktop/preflight_test.cpp)
+    target_compile_options(pocket-tts-preflight-test PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME pocket-tts-preflight COMMAND pocket-tts-preflight-test)
 endif()

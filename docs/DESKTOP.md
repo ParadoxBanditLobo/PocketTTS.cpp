@@ -58,3 +58,22 @@ Generated audio is written to a private temporary folder and removed when the ap
 5. Keep the inference API usable independently by ZenoVox without importing the raylib UI.
 
 Code credits: VolgaGerm/PocketTTS.cpp (MIT), Kyutai Pocket TTS (MIT code; independent model terms), raylib (zlib/libpng).
+
+
+## Offline preflight (third checkpoint)
+
+The GUI now checks for all six required INT8 model/tokenizer files and rejects missing
+or empty reference recordings **before** starting the ONNX runtime. It reports the
+first missing model filename directly in the status line.
+
+To run basic model-free validation tests:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Wpedantic desktop/preflight_test.cpp -o /tmp/pockettts-preflight-test
+/tmp/pockettts-preflight-test
+```
+
+Alternatively, configure CMake with `-DBUILD_DESKTOP_TESTS=ON` and run
+`ctest --test-dir .build --output-on-failure`. The preflight test itself
+does not need a model download or raylib. Full integration and audio fidelity
+tests are still pending on Linux with real model files.
