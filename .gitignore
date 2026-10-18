@@ -39,3 +39,6 @@ models/.cache/
 *.swo
 *~
 .DS_Store
+
+# Desktop-generated saved audio in repository root
+pocket-tts-output*.wav

@@ -45,6 +45,19 @@
 #include <onnxruntime_cxx_api.h>
 #include <sentencepiece_processor.h>
 
+// These single-header decoders are embedded in Pocket TTS and raylib.
+// Keep Pocket TTS's copy private to this translation unit so a static
+// raylib build does not produce duplicate drwav/drmp3/drflac linker symbols.
+// This does not change the C API exported by Pocket TTS itself.
+// dr_libs normally defines both its public API and private-helper macros
+// in one conditional. Overriding API requires defining PRIVATE as well.
+#define DRWAV_API static
+#define DRWAV_PRIVATE static
+#define DRMP3_API static
+#define DRMP3_PRIVATE static
+#define DRFLAC_API static
+#define DRFLAC_PRIVATE static
+
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
 
@@ -481,7 +494,12 @@ static std::string get_cache_path(const std::string& voices_dir, const std::stri
     if (slash != std::string::npos) filename = voice_path.substr(slash + 1);
     size_t dot = filename.rfind('.');
     if (dot != std::string::npos) filename = filename.substr(0, dot);
-    return voices_dir + "/.cache/" + filename + "." + ext;
+    // Disambiguate reference recordings from unrelated directories that share
+    // the same basename. Hash only the path; the mtime check handles edits.
+    uint64_t hash = 14695981039346656037ull;
+    for (unsigned char byte : voice_path)
+        hash = (hash ^ byte) * 1099511628211ull;
+    return voices_dir + "/.cache/" + filename + "." + std::to_string(hash) + "." + ext;
 }
 
 static bool is_cache_valid(const std::string& voice_path, const std::string& cache_path) {
@@ -1514,7 +1532,15 @@ public:
         }
         
         if (!raw) throw std::runtime_error("Failed to load audio: " + path);
-        
+        // Some decoders may return a non-null allocation for an empty/broken
+        // recording. Reject it before division by channels or max_element().
+        if (n == 0 || ch == 0 || sr == 0) {
+            if (ext == ".mp3") drmp3_free(raw, nullptr);
+            else if (ext == ".flac" || ext == ".ogg") drflac_free(raw, nullptr);
+            else drwav_free(raw, nullptr);
+            throw std::runtime_error("Reference recording is empty or invalid: " + path);
+        }
+
         std::vector<float> mono(n);
         for (size_t i = 0; i < n; ++i) {
             float sum = 0;
@@ -2046,7 +2072,7 @@ void PocketTTS::stream(const std::string& text, const Tensor& voice, StreamCallb
                 cv.wait(lock, [&]{ return (int)queue.size() >= want || gen_done || aborted; });
                 if (aborted) break;
                 
-                int take = gen_done ? (int)queue.size() : std::min((int)queue.size(), want);
+                int take = std::min((int)queue.size(), want); // Bound final decode batch
                 for (int i = 0; i < take; ++i) {
                     batch.push_back(std::move(queue.front()));
                     queue.pop_front();
@@ -2555,9 +2581,14 @@ private:
 
 extern "C" {
 
+// Thread-local error for model initialization. No callbacks/network involved.
+static thread_local std::string ptt_error_message;
+const char* ptt_last_error() { return ptt_error_message.c_str(); }
+
 void* ptt_create(const char* models_dir, const char* voices_dir,
                  const char* tokenizer_path, const char* precision,
                  float temperature, int lsd_steps, int num_threads) {
+    ptt_error_message.clear();
     try {
         pocket_tts::Config cfg;
         if (models_dir) cfg.models_dir = models_dir;
@@ -2569,6 +2600,7 @@ void* ptt_create(const char* models_dir, const char* voices_dir,
         cfg.num_threads = num_threads;
         return new pocket_tts::PocketTTS(cfg);
     } catch (const std::exception& e) {
+        ptt_error_message = e.what();
         std::cerr << "[pocket-tts] init error: " << e.what() << "\n";
         return nullptr;
     }
@@ -2601,6 +2633,7 @@ struct ptt_stream_ctx {
     std::deque<std::pair<float*, size_t>> chunks;
     bool done = false;
     bool aborted = false;
+    std::string error;
 };
 
 void* ptt_stream_start(void* handle, const char* text, const char* voice) {
@@ -2624,6 +2657,8 @@ void* ptt_stream_start(void* handle, const char* text, const char* voice) {
             });
         } catch (const std::exception& e) {
             std::cerr << "[pocket-tts] stream error: " << e.what() << "\n";
+            std::lock_guard<std::mutex> lock(ctx->mtx);
+            ctx->error = e.what();
         }
         {
             std::lock_guard<std::mutex> lock(ctx->mtx);
@@ -2649,7 +2684,13 @@ int ptt_stream_read(void* stream_ctx, float** out_samples, int* out_len) {
         *out_len = static_cast<int>(len);
         return 1;
     }
-    return 0;
+    return ctx->error.empty() ? 0 : -1;
+}
+
+// Read only once ptt_stream_read reports completion (0) or an error (-1).
+const char* ptt_stream_error(void* stream_ctx) {
+    if (!stream_ctx) return "Invalid TTS stream.";
+    return static_cast<ptt_stream_ctx*>(stream_ctx)->error.c_str();
 }
 
 void ptt_stream_end(void* stream_ctx) {
